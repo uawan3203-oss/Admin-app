@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TBM Billing Admin</title>
+<style>
+*{box-sizing:border-box;}
+body{margin:0;font-family:Arial,sans-serif;background:#f1f5f9;color:#17365d;}
+.header{background:#17365d;color:white;padding:25px 18px 22px;text-align:center;border-radius:0 0 28px 28px;}
+.header h1{margin:0;font-size:30px;}
+.header p{margin:6px 0 0;opacity:.85;}
+.container{max-width:650px;margin:auto;padding:18px;padding-bottom:90px;}
+.page{display:none;}
+.page.active{display:block;}
+.big-card{background:white;border-radius:22px;padding:22px;margin-bottom:16px;box-shadow:0 5px 20px rgba(0,0,0,.08);}
+.big-card h2{margin-top:0;}
+.dashboard{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.box{background:#f8fafc;border-radius:18px;padding:18px;min-height:110px;}
+.box-title{font-size:13px;font-weight:bold;color:#64748b;}
+.box-value{display:block;margin-top:10px;font-size:22px;font-weight:800;}
+label{display:block;font-weight:bold;margin:15px 0 7px;}
+input,select{width:100%;padding:14px;border:1px solid #cbd5e1;border-radius:12px;font-size:16px;background:white;}
+.status{display:flex;gap:10px;}
+.status label{flex:1;margin:0;padding:14px;background:#f8fafc;border-radius:12px;text-align:center;border:1px solid #ddd;}
+.status input{width:auto;}
+.calc{margin-top:18px;}
+.calc-row{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #e5e7eb;}
+.total-box{background:#e2f0d9;border-radius:18px;padding:20px;margin-top:15px;text-align:center;}
+.total-box small{display:block;font-weight:bold;}
+.total-box strong{display:block;font-size:27px;margin-top:7px;}
+button{width:100%;border:0;border-radius:13px;padding:15px;margin-top:15px;background:#17365d;color:white;font-size:17px;font-weight:bold;}
+button.secondary{background:#64748b;}
+button.danger{background:#b91c1c;}
+.history{background:#f8fafc;border:1px solid #e2e8f0;border-radius:17px;padding:16px;margin-bottom:12px;}
+.history h3{margin:0 0 8px;}
+.history p{margin:6px 0;color:#475569;}
+.payment-input{margin-top:12px;}
+.nav{position:fixed;bottom:0;left:0;right:0;background:white;box-shadow:0 -4px 15px rgba(0,0,0,.1);display:flex;justify-content:center;z-index:100;}
+.nav button{background:white;color:#64748b;margin:0;border-radius:0;font-size:13px;padding:13px 4px;}
+.nav button.active{color:#17365d;font-weight:800;}
+.empty{text-align:center;padding:30px 10px;color:#64748b;}
+.success{display:none;background:#dcfce7;color:#166534;padding:14px;border-radius:12px;margin-top:12px;font-weight:bold;}
+@media(max-width:430px){ .dashboard{grid-template-columns:1fr 1fr;} .box-value{font-size:19px;} }
+</style>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getDatabase, ref, onValue, push, update, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAqsKb0LhEDjhWrL25CvxUqU8Z_EKe0XhM",
+    authDomain: "tbm-billing.firebaseapp.com",
+    projectId: "tbm-billing",
+    storageBucket: "tbm-billing.firebasestorage.app",
+    messagingSenderId: "349584224335",
+    appId: "1:349584224335:web:02772af5c278f728113a3a",
+    databaseURL: "https://tbm-billing-default-rtdb.firebaseio.com"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  window.billsData = {};
+
+  onValue(ref(db, 'bills'), (snapshot) => {
+    window.billsData = snapshot.val() || {};
+    updateDashboard();
+    displayBills();
+    displayPayments();
+  });
+
+  window.saveBill = function(){
+    let person = document.getElementById("person").value.trim();
+    let date = document.getElementById("date").value;
+    let bill = Number(document.getElementById("bill").value);
+
+    if(!person || !bill || bill <= 0){
+      alert("Please enter Dr./Chemist name and valid amount.");
+      return;
+    }
+
+    let filer = document.querySelector('input[name="filer"]:checked').value === "filer";
+    let tax = filer ? bill * 0.005 : bill * 0.025;
+    let benefit = filer ? bill * 0.02 : 0;
+    let doctorProfit = bill * 0.0625;
+    let umairProfit = bill * 0.0625;
+    let payable = bill + umairProfit;
+
+    let record = {
+      id: Date.now(),
+      person: person,
+      date: date,
+      filer: filer,
+      bill: bill,
+      tax: tax,
+      benefit: benefit,
+      doctorProfit: doctorProfit,
+      umairProfit: umairProfit,
+      payable: payable,
+      paid: 0,
+      remaining: payable
+    };
+
+    push(ref(db, 'bills'), record).then(() => {
+      document.getElementById("success").style.display = "block";
+      resetForm(false);
+      setTimeout(() => { document.getElementById("success").style.display = "none"; }, 2500);
+    });
+  };
+
+  window.updatePayment = function(key, value){
+    let paid = Number(value) || 0;
+    let b = window.billsData[key];
+    if(!b) return;
+
+    if(paid > b.payable) paid = b.payable;
+    let remaining = Math.max(b.payable - paid, 0);
+
+    update(ref(db, 'bills/' + key), { paid: paid, remaining: remaining });
+  };
+
+  window.deleteBill = function(key){
+    if(confirm("Are you sure you want to delete this bill?")){
+      remove(ref(db, 'bills/' + key));
+    }
+  };
+</script>
+</head>
+
+<body>
+
+<div class="header">
+    <h1>TBM Billing</h1>
+    <p>Admin Manager (Live Sync)</p>
+</div>
+
+<div class="container">
+
+<section id="home" class="page active">
+    <div class="big-card">
+        <h2>Dashboard</h2>
+        <div class="dashboard">
+            <div class="box"><span class="box-title">TOTAL BILLS</span><span class="box-value" id="sBills">0</span></div>
+            <div class="box"><span class="box-title">TOTAL SALES</span><span class="box-value" id="sSales">Rs. 0</span></div>
+            <div class="box"><span class="box-title">UMAIR PROFIT</span><span class="box-value" id="sProfit">Rs. 0</span></div>
+            <div class="box"><span class="box-title">TOTAL PAYABLE</span><span class="box-value" id="sPayable">Rs. 0</span></div>
+            <div class="box"><span class="box-title">TOTAL PAID</span><span class="box-value" id="sPaid">Rs. 0</span></div>
+            <div class="box"><span class="box-title">REMAINING</span><span class="box-value" id="sRemaining">Rs. 0</span></div>
+        </div>
+    </div>
+    <div class="big-card">
+        <h2>Quick Action</h2>
+        <button onclick="showPage('new')">+ NEW BILL</button>
+        <button class="secondary" onclick="showPage('history')">VIEW BILL HISTORY</button>
+    </div>
+</section>
+
+<section id="new" class="page">
+    <div class="big-card">
+        <h2>New Bill</h2>
+        <label>Dr./Chemist Name</label>
+        <input id="person" type="text" placeholder="Enter name">
+
+        <label>Date</label>
+        <input id="date" type="date">
+
+        <label>Filer Status</label>
+        <div class="status">
+            <label><input type="radio" name="filer" value="filer" checked onchange="calculate()"> Filer</label>
+            <label><input type="radio" name="filer" value="nonfiler" onchange="calculate()"> Non-Filer</label>
+        </div>
+
+        <label>Total Bill Amount (Rs.)</label>
+        <input id="bill" type="number" min="0" placeholder="Enter amount" oninput="calculate()">
+
+        <div class="calc">
+            <div class="calc-row"><span>Tax</span><b id="tax">Rs. 0</b></div>
+            <div class="calc-row"><span>Dr./Chemist Profit 6.25%</span><b id="doctorProfit">Rs. 0</b></div>
+            <div class="calc-row" id="benefitRow"><span>Filer Benefit 2%</span><b id="benefit">Rs. 0</b></div>
+            <div class="calc-row"><span>TBM M. Umair Profit 6.25%</span><b id="umairProfit">Rs. 0</b></div>
+        </div>
+
+        <div class="total-box">
+            <small>TOTAL PAYABLE TO TBM M. UMAIR</small>
+            <strong id="payable">Rs. 0</strong>
+        </div>
+
+        <div class="success" id="success">✓ Bill saved successfully</div>
+        <button onclick="saveBill()">✓ SAVE BILL</button>
+        <button class="secondary" onclick="resetForm()">CLEAR</button>
+    </div>
+</section>
+
+<section id="history" class="page">
+    <div class="big-card">
+        <h2>Bill History</h2>
+        <div id="historyList"></div>
+    </div>
+</section>
+
+<section id="payments" class="page">
+    <div class="big-card">
+        <h2>Payment Tracking</h2>
+        <div class="dashboard">
+            <div class="box"><span class="box-title">TOTAL PAYABLE</span><span class="box-value" id="pPayable">Rs. 0</span></div>
+            <div class="box"><span class="box-title">TOTAL RECEIVED</span><span class="box-value" id="pPaid">Rs. 0</span></div>
+            <div class="box"><span class="box-title">TOTAL OUTSTANDING</span><span class="box-value" id="pRemaining">Rs. 0</span></div>
+        </div>
+    </div>
+
+    <div class="big-card">
+        <h2>Update Payments</h2>
+        <div id="paymentList"></div>
+    </div>
+</section>
+
+</div>
+
+<div class="nav">
+    <button id="navHome" class="active" onclick="showPage('home')">🏠<br>Home</button>
+    <button id="navNew" onclick="showPage('new')">➕<br>New Bill</button>
+    <button id="navHistory" onclick="showPage('history')">📋<br>History</button>
+    <button id="navPayments" onclick="showPage('payments')">💰<br>Payments</button>
+</div>
+
+<script>
+document.getElementById("date").valueAsDate = new Date();
+
+function money(value){
+    return "Rs. " + Number(value || 0).toLocaleString("en-PK", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function showPage(page){
+    document.querySelectorAll(".page").forEach(x => x.classList.remove("active"));
+    document.getElementById(page).classList.add("active");
+    document.querySelectorAll(".nav button").forEach(x => x.classList.remove("active"));
+    let nav = document.getElementById("nav" + page.charAt(0).toUpperCase() + page.slice(1));
+    if(nav) nav.classList.add("active");
+    if (page === 'history') displayBills();
+    if (page === 'payments') displayPayments();
+    if (page === 'home') updateDashboard();
+}
+
+function calculate(){
+    let bill = Number(document.getElementById("bill").value) || 0;
+    let filer = document.querySelector('input[name="filer"]:checked').value === "filer";
+    let tax = filer ? bill * 0.005 : bill * 0.025;
+    let benefit = filer ? bill * 0.02 : 0;
+    let doctorProfit = bill * 0.0625;
+    let umairProfit = bill * 0.0625;
+    let payable = bill + umairProfit;
+
+    document.getElementById("tax").innerText = money(tax);
+    document.getElementById("benefit").innerText = money(benefit);
+    document.getElementById("doctorProfit").innerText = money(doctorProfit);
+    document.getElementById("umairProfit").innerText = money(umairProfit);
+    document.getElementById("payable").innerText = money(payable);
+}
+
+function resetForm(clearName = true){
+    if(clearName) document.getElementById("person").value = "";
+    document.getElementById("bill").value = "";
+    calculate();
+}
+
+function displayBills(){
+    let list = document.getElementById("historyList");
+    if(!list) return;
+    let keys = Object.keys(window.billsData || {});
+    if(keys.length === 0){
+        list.innerHTML = '<div class="empty">No bills saved yet.</div>';
+        return;
+    }
+    list.innerHTML = "";
+    keys.reverse().forEach(key => {
+        let b = window.billsData[key];
+        let div = document.createElement("div");
+        div.className = "history";
+        div.innerHTML = `
+            <h3>${escapeHTML(b.person)}</h3>
+            <p><b>Date:</b> ${b.date}</p>
+            <p><b>Status:</b> ${b.filer ? "Filer" : "Non-Filer"}</p>
+            <p><b>Bill:</b> ${money(b.bill)}</p>
+            <p><b>Tax:</b> ${money(b.tax)}</p>
+            ${b.filer ? `<p><b>Filer Benefit:</b> ${money(b.benefit)}</p>` : ""}
+            <p><b>Dr./Chemist Profit:</b> ${money(b.doctorProfit)}</p>
+            <p><b>TBM M. Umair Profit:</b> ${money(b.umairProfit)}</p>
+            <p><b>Total Payable:</b> ${money(b.payable)}</p>
+            <p><b>Paid:</b> ${money(b.paid)}</p>
+            <p><b>Remaining:</b> ${money(b.remaining)}</p>
+            <button class="danger" onclick="deleteBill('${key}')">DELETE BILL</button>
+        `;
+        list.appendChild(div);
+    });
+}
+
+function displayPayments(){
+    let list = document.getElementById("paymentList");
+    if(!list) return;
+    let keys = Object.keys(window.billsData || {});
+    if(keys.length === 0){
+        list.innerHTML = '<div class="empty">No payment records.</div>';
+        return;
+    }
+    list.innerHTML = "";
+    keys.reverse().forEach(key => {
+        let b = window.billsData[key];
+        let div = document.createElement("div");
+        div.className = "history";
+        div.innerHTML = `
+            <h3>${escapeHTML(b.person)}</h3>
+            <p>Bill: <b>${money(b.bill)}</b></p>
+            <p>Total Payable: <b>${money(b.payable)}</b></p>
+            <label>Amount Paid to TBM M. Umair</label>
+            <input class="payment-input" type="number" min="0" max="${b.payable}" value="${b.paid}" onchange="updatePayment('${key}', this.value)">
+            <p>Remaining: <b>${money(b.remaining)}</b></p>
+        `;
+        list.appendChild(div);
+    });
+}
+
+function updateDashboard(){
+    let keys = Object.keys(window.billsData || {});
+    let sales = 0, profit = 0, payable = 0, paid = 0, remaining = 0;
+
+    keys.forEach(key => {
+        let b = window.billsData[key];
+        sales += b.bill || 0;
+        profit += b.umairProfit || 0;
+        payable += b.payable || 0;
+        paid += b.paid || 0;
+        remaining += b.remaining || 0;
+    });
+
+    document.getElementById("sBills").innerText = keys.length;
+    document.getElementById("sSales").innerText = money(sales);
+    document.getElementById("sProfit").innerText = money(profit);
+    document.getElementById("sPayable").innerText = money(payable);
+    document.getElementById("sPaid").innerText = money(paid);
+    document.getElementById("sRemaining").innerText = money(remaining);
+
+    document.getElementById("pPayable").innerText = money(payable);
+    document.getElementById("pPaid").innerText = money(paid);
+    document.getElementById("pRemaining").innerText = money(remaining);
+}
+
+function escapeHTML(text){
+    return String(text).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+}
+
+calculate();
+</script>
+</body>
+  </html>
+  
